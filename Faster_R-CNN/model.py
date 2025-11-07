@@ -30,9 +30,9 @@ def get_model():
     return model
 
 
-if __name__ == '__main__':
-    # A small test to ensure the model builds correctly
-    print("Building model...")
-    model = get_model()
-    print("Model built successfully.")
-    print(f"Model will predict for {config.NUM_CLASSES} classes.")
+# if __name__ == '__main__':
+#     # A small test to ensure the model builds correctly
+#     print("Building model...")
+#     model = get_model()
+#     print("Model built successfully.")
+#     print(f"Model will predict for {config.NUM_CLASSES} classes.")

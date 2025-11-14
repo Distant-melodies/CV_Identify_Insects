@@ -2,7 +2,7 @@
 # -*-coding:utf-8 -*-
 """
 # File       : train
-# Time       ：2025/11/14 21:16
+# Time       ：2025/11/12 21:16
 # Author     ：Jingyang Dai
 # zId        ：z5553615
 # Description：
@@ -11,13 +11,11 @@ import torch
 import os
 import sys
 import time
+from tqdm import tqdm  # Import tqdm for validation progress bar
 
 from src import config
 from src.model import get_model
 from src.DataProcessing.DataLoaders import data_loader_train, data_loader_valid
-
-num_epochs = 1
-
 
 def main():
     # --- 1. Setup ---
@@ -39,6 +37,10 @@ def main():
                                                    step_size=3,
                                                    gamma=0.1)
 
+    # --- NEW: Define epochs and best_loss inside main ---
+    num_epochs = 10  # Set this to your desired number (e.g., 20)
+    best_val_loss = float('inf') # Track the best validation loss
+
     print("--- Starting Training Loop ---")
     total_start_time = time.time()
 
@@ -47,70 +49,69 @@ def main():
         model.train()
         print(f"\n--- Epoch {epoch + 1}/{num_epochs} ---")
         epoch_start_time = time.time()
-        loss_sum = 0
-        total_batches = len(data_loader_train)
-
-        # This print is now in Dataset.py
-        # print("DataLoader is preparing batches...")
+        train_loss_sum = 0
+        total_train_batches = len(data_loader_train)
 
         for batch_idx, (images, targets) in enumerate(data_loader_train, 1):
-            # --- DETAILED LOGGING ---
-            progress = (batch_idx / total_batches) * 100
-            # \r = carriage return (stay on one line)
-            print(f"  Training: [Batch {batch_idx}/{total_batches}] {progress:.2f}% - Loading data to GPU...     ",
+            progress = (batch_idx / total_train_batches) * 100
+            print(f"  Training: [Batch {batch_idx}/{total_train_batches}] {progress:.2f}% - Loading data to GPU...     ",
                   end='\r')
 
             images = list(image.to(config.DEVICE) for image in images)
             targets = [{k: v.to(config.DEVICE) for k, v in t.items()} for t in targets]
 
-            print(f"  Training: [Batch {batch_idx}/{total_batches}] {progress:.2f}% - Running Forward Pass...      ",
+            print(f"  Training: [Batch {batch_idx}/{total_train_batches}] {progress:.2f}% - Running Forward Pass...      ",
                   end='\r')
             loss_dict = model(images, targets)
             losses = sum(loss for loss in loss_dict.values())
             loss_value = losses.item()
-            loss_sum += loss_value
+            train_loss_sum += loss_value
 
-            print(f"  Training: [Batch {batch_idx}/{total_batches}] {progress:.2f}% - Running Backward Pass...     ",
+            print(f"  Training: [Batch {batch_idx}/{total_train_batches}] {progress:.2f}% - Running Backward Pass...     ",
                   end='\r')
             optimizer.zero_grad()
             losses.backward()
             optimizer.step()
 
-            # Final status update for this batch
-            print(f"  Training: [Batch {batch_idx}/{total_batches}] {progress:.2f}% - Loss: {loss_value:.4f}          ",
+            print(f"  Training: [Batch {batch_idx}/{total_train_batches}] {progress:.2f}% - Loss: {loss_value:.4f}          ",
                   end='\r')
 
-        # --- End of Epoch Summary ---
-        print()  # Move to a new line after the progress bar
+        print() # New line after progress bar
         epoch_end_time = time.time()
         epoch_duration = epoch_end_time - epoch_start_time
-        avg_loss = loss_sum / total_batches
-        print(f"Epoch {epoch + 1} Training Loss: {avg_loss:.4f} (Took {epoch_duration:.2f}s)")
+        avg_train_loss = train_loss_sum / total_train_batches
+        print(f"Epoch {epoch + 1} Training Loss: {avg_train_loss:.4f} (Took {epoch_duration:.2f}s)")
 
         lr_scheduler.step()
 
-        # --- 4. Validation Loop (Corrected) ---
+        # --- 4. Validation Loop (FIXED) ---
+        # Now we iterate over the *entire* validation set
+        model.train() # Keep in train() mode to get loss, but use no_grad()
+        print(f"--- Running Full Validation for Epoch {epoch + 1} ---")
 
-        # We set the model to train() mode to get the loss dictionary.
-        # However, we wrap it in torch.no_grad() so no gradients
-        # are computed and the model does not learn.
-        model.train()
+        val_loss_sum = 0
+        total_val_batches = len(data_loader_valid)
 
-        print(f"--- Running Validation for Epoch {epoch + 1} ---")
+        with torch.no_grad():
+            # Use tqdm for a validation progress bar
+            for images_val, targets_val in tqdm(data_loader_valid, desc="Validating"):
+                images_val = list(image.to(config.DEVICE) for image in images_val)
+                targets_val = [{k: v.to(config.DEVICE) for k, v in t.items()} for t in targets_val]
 
-        with torch.no_grad():  # <-- Gradients are disabled here
-            # Get one batch from the validation loader
-            images_val, targets_val = next(iter(data_loader_valid))
+                val_loss_dict = model(images_val, targets_val)
+                val_losses = sum(loss for loss in val_loss_dict.values())
+                val_loss_sum += val_losses.item()
 
-            images_val = list(image.to(config.DEVICE) for image in images_val)
-            targets_val = [{k: v.to(config.DEVICE) for k, v in t.items()} for t in targets_val]
+        avg_val_loss = val_loss_sum / total_val_batches
+        print(f"Epoch {epoch + 1} Average Validation Loss: {avg_val_loss:.4f}")
 
-            # Forward pass (will return a dict of losses)
-            val_loss_dict = model(images_val, targets_val)
+        # --- 5. Best Model Saving (FIXED) ---
+        # Save the model *only if* this epoch's validation loss is the best one so far
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            torch.save(model.state_dict(), "fasterrcnn_best.pth")
+            print(f"*** New best model saved to fasterrcnn_best.pth (Val Loss: {best_val_loss:.4f}) ***")
 
-            # Now this sum() will work correctly
-            val_losses = sum(loss for loss in val_loss_dict.values())
-            print(f"  Validation Loss (1 batch): {val_losses.item():.4f}")
 
     total_end_time = time.time()
     total_duration_sec = total_end_time - total_start_time
@@ -119,8 +120,9 @@ def main():
     print("\n--- Training Finished ---")
     print(f"Total Training Time: {total_duration_sec:.2f} seconds ({total_duration_min:.2f} minutes)")
 
+    # We still save the final model, but the 'best' one is what truly matters
     torch.save(model.state_dict(), "fasterrcnn_final.pth")
-    print("Model saved to fasterrcnn_final.pth")
+    print("Final model saved to fasterrcnn_final.pth")
 
 
 if __name__ == "__main__":

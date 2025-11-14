@@ -53,3 +53,16 @@ data_loader_valid = DataLoader(
     collate_fn=collate_fn
 )
 
+print(f"Loading test data from: {config.TEST_DIR}")
+dataset_test = PestDataset(
+    root_dir=str(config.TEST_DIR),
+    transform=get_transform(train=False) # No augmentation
+)
+
+data_loader_test = DataLoader(
+    dataset_test,
+    batch_size=1, # Always use batch_size=1 for evaluation
+    shuffle=False,
+    num_workers=config.NUM_WORKERS,
+    collate_fn=collate_fn
+)

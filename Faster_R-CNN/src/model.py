@@ -9,7 +9,7 @@
 """
 import torchvision
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
-import config
+from src import config
 
 
 def get_model():

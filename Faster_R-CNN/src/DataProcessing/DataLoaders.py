@@ -8,12 +8,11 @@
 # Description：
 """
 
-import torch
 from torch.utils.data import DataLoader
 
 # Use absolute imports from the package root 'Faster_R_CNN'
-from Dataset import PestDataset, get_transform
-from .. import config
+from .Dataset import PestDataset, get_transform
+from src import config
 
 
 def collate_fn(batch):

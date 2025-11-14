@@ -7,13 +7,12 @@
 # zId        ：z5553615
 # Description：
 """
-# In Faster_R-CNN/config.py
 
 import os
 from pathlib import Path
 import torch
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent
 
 
 ARCHIVE_DIR = ROOT_DIR / 'archive'

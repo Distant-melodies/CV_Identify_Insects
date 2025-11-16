@@ -7,122 +7,214 @@
 # zId        ：z5553615
 # Description：
 """
-import torch
-import os
-import sys
 import time
-from tqdm import tqdm  # Import tqdm for validation progress bar
+import json
+from pathlib import Path
+
+import numpy as np
+import torch
+from tqdm import tqdm
 
 from src import config
 from src.model import get_model
 from src.DataProcessing.DataLoaders import data_loader_train, data_loader_valid
 
+amp_device = "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def train_one_epoch(model, optimizer, data_loader, device, epoch, scaler=None, use_amp=False):
+    """Single training epoch."""
+    model.train()
+    epoch_start = time.time()
+
+    running_loss = 0.0
+    num_batches = len(data_loader)
+
+    pbar = tqdm(data_loader, desc=f"Epoch {epoch + 1} [Train]", ncols=100)
+    for images, targets in pbar:
+        images = [img.to(device) for img in images]
+        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+
+        optimizer.zero_grad()
+
+        if use_amp and scaler is not None:
+            with torch.amp.autocast(amp_device):
+                loss_dict = model(images, targets)
+                loss = sum(loss for loss in loss_dict.values())
+
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss_dict = model(images, targets)
+            loss = sum(loss for loss in loss_dict.values())
+            loss.backward()
+            optimizer.step()
+
+        loss_value = loss.item()
+        running_loss += loss_value
+
+        pbar.set_postfix(loss=f"{loss_value:.4f}")
+
+    avg_loss = running_loss / num_batches
+    epoch_time = time.time() - epoch_start
+    print(f"Epoch {epoch + 1} Train Loss: {avg_loss:.4f} (Time: {epoch_time:.2f}s)")
+
+    return avg_loss
+
+
+def validate_one_epoch(model, data_loader, device, epoch):
+    """
+    Validation loss for one epoch.
+
+    NOTE: For torchvision detection models, loss is only returned in train() mode.
+    So we keep model.train() but wrap with torch.no_grad() to avoid gradient updates.
+    """
+    model.train()  # important: keep train mode to get loss_dict
+    val_start = time.time()
+
+    running_loss = 0.0
+    num_batches = len(data_loader)
+
+    with torch.no_grad():
+        pbar = tqdm(data_loader, desc=f"Epoch {epoch + 1} [Valid]", ncols=100)
+        for images, targets in pbar:
+            images = [img.to(device) for img in images]
+            targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+
+            loss_dict = model(images, targets)
+            loss = sum(loss for loss in loss_dict.values())
+            loss_value = loss.item()
+            running_loss += loss_value
+
+            pbar.set_postfix(loss=f"{loss_value:.4f}")
+
+    avg_val_loss = running_loss / num_batches
+    val_time = time.time() - val_start
+    print(f"Epoch {epoch + 1} Valid Loss: {avg_val_loss:.4f} (Time: {val_time:.2f}s)")
+
+    return avg_val_loss
+
+
 def main():
-    # --- 1. Setup ---
-    print(f"Starting training on device: {config.DEVICE}")
-    if config.DEVICE == 'cpu':
+    # --- Setup ---
+    device = config.DEVICE
+    print(f"Starting training on device: {device}")
+
+    if str(device) == "cpu":
         print("=" * 50)
         print("WARNING: Training on CPU. This will be extremely slow.")
         print("=" * 50)
         time.sleep(3)
 
-    model = get_model()
-    model.to(config.DEVICE)
+    # Optional: reproducibility
+    if hasattr(config, "SEED"):
+        torch.manual_seed(config.SEED)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(config.SEED)
 
-    # --- 2. Optimizer & Scheduler ---
+    model = get_model().to(device)
+
+    # --- Optimizer & Scheduler ---
     params = [p for p in model.parameters() if p.requires_grad]
-    optimizer = torch.optim.SGD(params, lr=0.005,
-                                momentum=0.9, weight_decay=0.0005)
-    lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer,
-                                                   step_size=3,
-                                                   gamma=0.1)
+    optimizer = torch.optim.SGD(
+        params,
+        lr=0.005,
+        momentum=0.9,
+        weight_decay=0.0005,
+    )
+    lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=0.1)
 
-    # --- NEW: Define epochs and best_loss inside main ---
-    num_epochs = 10  # Set this to your desired number (e.g., 20)
-    best_val_loss = float('inf') # Track the best validation loss
+    # --- AMP (mixed precision) setup ---
+    use_amp = (str(device) != "cpu") and torch.cuda.is_available()
+
+    if use_amp:
+        scaler = torch.amp.GradScaler(amp_device)
+        print("Using mixed precision (AMP) training.")
+    else:
+        scaler = None
+        print("Not using mixed precision (CPU or no CUDA).")
+
+    num_epochs = getattr(config, "NUM_EPOCHS", 1)
+    best_val_loss = float("inf")
 
     print("--- Starting Training Loop ---")
-    total_start_time = time.time()
+    total_start = time.time()
+
+    train_losses = []
+    val_losses = []
+    lrs = []
 
     for epoch in range(num_epochs):
-        # --- 3. Training Loop ---
-        model.train()
-        print(f"\n--- Epoch {epoch + 1}/{num_epochs} ---")
-        epoch_start_time = time.time()
-        train_loss_sum = 0
-        total_train_batches = len(data_loader_train)
+        current_lr = optimizer.param_groups[0]["lr"]
+        lrs.append(current_lr)
+        print(f"\nEpoch {epoch + 1}/{num_epochs} - LR: {current_lr:.6f}")
 
-        for batch_idx, (images, targets) in enumerate(data_loader_train, 1):
-            progress = (batch_idx / total_train_batches) * 100
-            print(f"  Training: [Batch {batch_idx}/{total_train_batches}] {progress:.2f}% - Loading data to GPU...     ",
-                  end='\r')
+        # 1) Train
+        train_loss = train_one_epoch(
+            model,
+            optimizer,
+            data_loader_train,
+            device,
+            epoch,
+            scaler=scaler,
+            use_amp=use_amp,
+        )
+        train_losses.append(train_loss)
 
-            images = list(image.to(config.DEVICE) for image in images)
-            targets = [{k: v.to(config.DEVICE) for k, v in t.items()} for t in targets]
+        # 2) Validate
+        val_loss = validate_one_epoch(
+            model,
+            data_loader_valid,
+            device,
+            epoch,
+        )
+        val_losses.append(val_loss)
 
-            print(f"  Training: [Batch {batch_idx}/{total_train_batches}] {progress:.2f}% - Running Forward Pass...      ",
-                  end='\r')
-            loss_dict = model(images, targets)
-            losses = sum(loss for loss in loss_dict.values())
-            loss_value = losses.item()
-            train_loss_sum += loss_value
-
-            print(f"  Training: [Batch {batch_idx}/{total_train_batches}] {progress:.2f}% - Running Backward Pass...     ",
-                  end='\r')
-            optimizer.zero_grad()
-            losses.backward()
-            optimizer.step()
-
-            print(f"  Training: [Batch {batch_idx}/{total_train_batches}] {progress:.2f}% - Loss: {loss_value:.4f}          ",
-                  end='\r')
-
-        print() # New line after progress bar
-        epoch_end_time = time.time()
-        epoch_duration = epoch_end_time - epoch_start_time
-        avg_train_loss = train_loss_sum / total_train_batches
-        print(f"Epoch {epoch + 1} Training Loss: {avg_train_loss:.4f} (Took {epoch_duration:.2f}s)")
-
+        # 3) Step LR scheduler
         lr_scheduler.step()
 
-        # --- 4. Validation Loop (FIXED) ---
-        # Now we iterate over the *entire* validation set
-        model.train() # Keep in train() mode to get loss, but use no_grad()
-        print(f"--- Running Full Validation for Epoch {epoch + 1} ---")
-
-        val_loss_sum = 0
-        total_val_batches = len(data_loader_valid)
-
-        with torch.no_grad():
-            # Use tqdm for a validation progress bar
-            for images_val, targets_val in tqdm(data_loader_valid, desc="Validating"):
-                images_val = list(image.to(config.DEVICE) for image in images_val)
-                targets_val = [{k: v.to(config.DEVICE) for k, v in t.items()} for t in targets_val]
-
-                val_loss_dict = model(images_val, targets_val)
-                val_losses = sum(loss for loss in val_loss_dict.values())
-                val_loss_sum += val_losses.item()
-
-        avg_val_loss = val_loss_sum / total_val_batches
-        print(f"Epoch {epoch + 1} Average Validation Loss: {avg_val_loss:.4f}")
-
-        # --- 5. Best Model Saving (FIXED) ---
-        # Save the model *only if* this epoch's validation loss is the best one so far
-        if avg_val_loss < best_val_loss:
-            best_val_loss = avg_val_loss
+        # 4) Save best model
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
             torch.save(model.state_dict(), "fasterrcnn_best.pth")
-            print(f"*** New best model saved to fasterrcnn_best.pth (Val Loss: {best_val_loss:.4f}) ***")
+            print(f"*** New best model saved (Val Loss: {best_val_loss:.4f}) ***")
 
-
-    total_end_time = time.time()
-    total_duration_sec = total_end_time - total_start_time
-    total_duration_min = total_duration_sec / 60
-
+    total_time = time.time() - total_start
     print("\n--- Training Finished ---")
-    print(f"Total Training Time: {total_duration_sec:.2f} seconds ({total_duration_min:.2f} minutes)")
+    print(f"Total Training Time: {total_time:.2f}s ({total_time / 60:.2f} min)")
 
-    # We still save the final model, but the 'best' one is what truly matters
+    # Save final model
     torch.save(model.state_dict(), "fasterrcnn_final.pth")
     print("Final model saved to fasterrcnn_final.pth")
+
+    # Result recorded: loss & lr
+    try:
+        root_dir = config.ROOT_DIR
+    except AttributeError:
+        root_dir = Path(".").resolve()
+
+    results_dir = Path(root_dir) / "results"
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save as.npy for easier plotting with numpy/matplotlib
+    np.save(results_dir / "train_losses.npy", np.array(train_losses, dtype=np.float32))
+    np.save(results_dir / "val_losses.npy", np.array(val_losses, dtype=np.float32))
+    np.save(results_dir / "lrs.npy", np.array(lrs, dtype=np.float32))
+
+    # 2Save as json，
+    log = {
+        "num_epochs": int(num_epochs),
+        "best_val_loss": float(best_val_loss),
+        "total_time_sec": float(total_time),
+        "train_losses": [float(x) for x in train_losses],
+        "val_losses": [float(x) for x in val_losses],
+        "lrs": [float(x) for x in lrs],
+    }
+    with open(results_dir / "training_log.json", "w", encoding="utf-8") as f:
+        json.dump(log, f, indent=2)
+
+    print(f"Training logs saved to: {results_dir}")
 
 
 if __name__ == "__main__":

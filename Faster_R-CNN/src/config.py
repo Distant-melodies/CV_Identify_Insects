@@ -26,3 +26,5 @@ NUM_CLASSES = 13
 BATCH_SIZE = 2
 NUM_WORKERS = 0
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+NUM_EPOCHS = 25

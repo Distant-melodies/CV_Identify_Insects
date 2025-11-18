@@ -28,3 +28,14 @@ NUM_WORKERS = 0
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 NUM_EPOCHS = 25
+
+
+# Imbalanced training experiment settings
+USE_IMBALANCED_TRAIN = True
+MINORITY_CLASSES = [1, 3, 5]
+# Random seed used for building the imbalanced subset
+IMBALANCE_SEED = 98
+
+
+# class-balanced WeightedRandomSample
+USE_BALANCED_SAMPLER = True

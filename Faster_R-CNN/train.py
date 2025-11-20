@@ -97,7 +97,7 @@ def validate_one_epoch(model, data_loader, device, epoch):
 
 
 def main():
-    # --- Setup ---
+    # Setup
     device = config.DEVICE
     print(f"Starting training on device: {device}")
 
@@ -125,7 +125,7 @@ def main():
     )
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=0.1)
 
-    # --- AMP (mixed precision) setup ---
+    # AMP (mixed precision) setup
     use_amp = (str(device) != "cpu") and torch.cuda.is_available()
 
     if use_amp:

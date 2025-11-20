@@ -1,31 +1,98 @@
 # CV_Identify_Insects
-9517 detect and identify insects
 
-（咳咳，敲黑板）
-这是一个关于检测和识别昆虫的CV项目    
-~~虽然只是为了拿分~~    
-但是我们还是要好好加油拿高分    
-    
-项目成员包括两位美丽优雅的女士，Yarra和Rachel        
-还有三位帅气认真的男士，Dylon, GW 和 Brett（也就是本人~）    
+In this project we build and compare several object detection models for **insect detection in field images**, with a particular focus on:
 
-## 项目方案
-（每个部分到时候认领了回来各自完善文案哈） 
-### 1. 经典机器学习方法    
-*   检测器 (Detector): 滑动窗口 (Sliding Window)。
-*   分类器 (Classifier): HOG 特征 + 支持向量机 (SVM)。
+- A **Faster R-CNN** baseline (two-stage detector)
+- Robustness to **image distortions** (noise, blur, dark images, occlusion)
+- Behaviour under **class imbalance** and simple **rebalancing**
+- **Explainability** via Grad-CAM attention maps
+- Comparison with other detection paradigms (YOLOv11x, SS+ResNet34, RealTime-DETR)
+
+The code is organised so that you can train, evaluate, stress-test and explain the detectors in a modular way.
+
+---
+
+## 1. Environment and Dependencies
+
+Tested with:
+
+- Python 3.10+ (3.8–3.11 should also work)
+- PyTorch ≥ 2.0
+- torchvision ≥ 0.15
+- torchmetrics
+- pytorch-grad-cam
+- OpenCV (optional, for some utils)
+- matplotlib
+
+Install the main dependencies (adapt as needed):
+
+```bash
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+pip install torchmetrics pytorch-grad-cam matplotlib opencv-python
+```
+
+---
+
+## 2. Faster R-CNN: Training and Evaluation
+From the Faster_R-CNN/ directory:    
+
+```bash
+python train.py
+python evaluate.py
+```
+
+---
+
+## 3. Robustness Experiments (Noise, Blur, Dark, Occlusion)
+```bash
+# Clean
+python evaluate.py --distortion none
+
+# Gaussian noise
+python evaluate.py --distortion noise --sigma 0.1
+python evaluate.py --distortion noise --sigma 0.2
+
+# Blur
+python evaluate.py --distortion blur --sigma 1.0
+python evaluate.py --distortion blur --sigma 2.0
+
+# Dark
+python evaluate.py --distortion dark --factor 0.5
+
+# Occlusion
+python evaluate.py --distortion occlusion --area 0.25
+
+```
 
 
-### 2. 两阶段深度学习检测器 (Faster R-CNN)
-*   检测器 (Detector): 区域提议网络 (RPN)
-*   分类器 (Classifier): 网络分类头 (Network Head)
 
-### 3. 单阶段深度学习检测器 (YOLO 或 SSD)
-*   检测器 (Detector): 单次网格预测 (Single-Shot Grid)
-*   分类器 (Classifier): 集成的分类预测
+---
 
-### 4. 迁移学习
-这个就纯靠探索了
+## 4. Class Imbalance and Rebalancing
+In config.py:
+```python
+USE_IMBALANCED_TRAIN = True
 
-## 总结
-目前就这么多，后面慢慢维护吧，大家加油
+MINORITY_CLASSES = [1, 3, 5]
+MINORITY_KEEP_RATIO = 0.2
+IMBALANCE_SEED = 42
+
+USE_BALANCED_SAMPLER = True
+
+
+```
+
+---
+
+## 5. Explainability with Grad-CAM
+```bash
+python attention_maps_cam.py --ckpt path/to/fasterrcnn_checkpoint.pth
+```
+
+## 6. Utilities: Visualising Ground Truth Boxes
+```bash
+python src/DataProcessing/viz_boxes.py
+
+```
+
+

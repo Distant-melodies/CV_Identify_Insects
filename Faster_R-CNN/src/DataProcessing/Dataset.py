@@ -12,7 +12,7 @@ import os
 from PIL import Image
 from torch.utils.data import Dataset
 import torchvision.transforms as T
-from tqdm import tqdm  # Import tqdm for a progress bar
+from tqdm import tqdm
 
 
 class PestDataset(Dataset):

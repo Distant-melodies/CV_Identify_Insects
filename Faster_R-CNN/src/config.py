@@ -31,11 +31,11 @@ NUM_EPOCHS = 25
 
 
 # Imbalanced training experiment settings
-USE_IMBALANCED_TRAIN = True
+USE_IMBALANCED_TRAIN = False
 MINORITY_CLASSES = [1, 3, 5]
 # Random seed used for building the imbalanced subset
 IMBALANCE_SEED = 98
 
 
 # class-balanced WeightedRandomSample
-USE_BALANCED_SAMPLER = True
+USE_BALANCED_SAMPLER = False
